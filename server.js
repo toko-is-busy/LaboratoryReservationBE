@@ -69,7 +69,7 @@ const bcrypt = require('bcrypt');
 
 // Function to set the storage engine and file name
 const storage = multer.diskStorage({
-  destination: '../public/uploads', // Save uploaded images in the "public/uploads" directory
+  destination: './public/uploads', // Save uploaded images in the "public/uploads" directory
   filename: (req, file, callback) => {
     // Rename the file to a unique name to avoid conflicts
     callback(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
