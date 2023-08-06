@@ -1,12 +1,12 @@
 // server.js
 import { createRequire } from 'module';
+import 'esm';
 const require = createRequire(import.meta.url);
 
 let User;
 let Profiles;
 let Reservations;
 let LoggedUser;
-let Picture;
 
 import('./models/user.js')
   .then((module) => {
@@ -46,20 +46,52 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-  
-const app = express();
-const PORT = process.env.PORT || 3000;
-//const bcrypt = require('bcrypt');
-  
+require('dotenv').config();
+const path = require('path');
+const multer = require('multer');
 
+const app = express();
 app.use(bodyParser.json());
 app.use(cors());
+
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
+app.use(express.static(path.join(__dirname, 'public', 'uploads')));
   
   // Connect to MongoDB
-mongoose.connect('mongodb+srv://admin:1234567890@cluster0.ugrgne2.mongodb.net/lab-reservation-system', {
+mongoose.connect(process.env.DB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
+
+const PORT = process.env.PORT;
+const bcrypt = require('bcrypt');
+
+
+// Function to set the storage engine and file name
+const storage = multer.diskStorage({
+  destination: '../public/uploads', // Save uploaded images in the "public/uploads" directory
+  filename: (req, file, callback) => {
+    // Rename the file to a unique name to avoid conflicts
+    callback(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
+  },
+})
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 1024 * 1024 * 5 }, // Set a limit of 5MB for image size
+  fileFilter: (req, file, callback) => {
+    // Check if the uploaded file is an image (JPEG or PNG)
+    const filetypes = /jpeg|jpg|png/;
+    const mimetype = filetypes.test(file.mimetype);
+    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+
+    if (mimetype && extname) {
+      return callback(null, true);
+    } else {
+      callback('Error: Images only!');
+    }
+  },
+}).single('profilePicture')
   
 const db = mongoose.connection;
 db.on('error', console.error.bind(console, 'Connection error:'));
@@ -76,8 +108,9 @@ app.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email already registered.' });
     }
   
+    const hashedPassword = await bcrypt.hash(password, 10);
     // Create a new user in the database
-    const newUser = new User({ email, password, username });
+    const newUser = new User({ email, password: hashedPassword, username });
     await newUser.save();
   
     return res.status(201).json({ message: 'Registration successful! You may now log in.' });
@@ -156,8 +189,9 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'User does not exist.'});
     }
   
+    const passwordMatch = await bcrypt.compare(password, user.password);
     // Compare the provided password with the hashed password in the database
-    if (password === user.password) {
+    if (passwordMatch) {
       return res.status(200).json({ message: 'Login successful!' });
     } else {
       return res.status(401).json({ error: 'Password Incorrect.' });
@@ -277,5 +311,50 @@ app.post('/saveDescription', async (req, res) => {
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });
+
+app.post('/deleteUser', async (req, res) => {
+  const { username} = req.body;
+
+  try {
+
+    const deletedUser = await User.findOneAndDelete({ username });
+    const deletedProfile = await Profiles.findOneAndDelete({ username });
+    await Reservations.deleteMany({ username });
+
+    if (!deletedUser || !deletedProfile) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    return res.status(200).json({ message: 'User and associated records deleted successfully.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+app.post('/uploadProfilePicture', upload, async (req, res) => {
+  const username = req.query.username;
+  
+  try {
+    // Find the user's profile in the database
+    const profile = await Profiles.findOne({ username });
+    if (!profile) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Update the user's profile picture with the new uploaded picture
+    profile.picture = req.file.path; // Adjust this if needed based on your file path structure
+    
+    await profile.save();
+    return res.status(200).json({ message: 'Profile picture updated successfully.', picture: profile.picture });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+
+app.use(express.static('public'));
   // Start the server
 app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
